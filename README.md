@@ -113,15 +113,11 @@ The design is suitable for:
 ```
 .
 ├── rtl/
-│   ├── alif_neuron.sv        # Top-level ALIF neuron module
-│   ├── membrane_update.sv   # Membrane voltage datapath
-│   ├── adaptation_update.sv # W[t] update logic
-│   ├── spike_logic.sv       # Threshold and spike generation
-│   └── refractory.sv        # Refractory counter
+│   └── ed_alif_neuron.sv        # Top-level ALIF neuron module
 │
 ├── tb/
-│   ├── alif_tb.sv            # Testbench
-│   └── stimuli.mem          # Input stimulus file
+│   └── tb_ed_alif_neuron.sv           # Testbench
+│
 │
 ├── docs/
 │   ├── neuron_model.md      # Mathematical model description
