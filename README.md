@@ -112,16 +112,14 @@ The design is suitable for:
 
 ```
 .
-├── rtl/
-│   └── ed_alif_neuron.sv        # Top-level ALIF neuron module
-│
-├── tb/
+├── src/
+│   ├──ed_alif_neuron.sv               # Top-level ALIF neuron module
 │   └── tb_ed_alif_neuron.sv           # Testbench
 │
 │
 ├── docs/
-│   ├── neuron_model.md      # Mathematical model description
-│   ├── rtl_architecture.md  # RTL block-level architecture
+│   ├── neuron_model.md                # Mathematical model description
+│   ├── rtl_architecture.md            # RTL block-level architecture
 │   └── baseline_vs_event_driven.md
 │
 └── README.md
@@ -162,12 +160,6 @@ The design is suitable for:
 * AXI / SPI configuration interface
 * Sparse synapse memory integration
 * Mixed-precision support
-
----
-
-## License
-
-This project is released under the MIT License.
 
 ---
 
