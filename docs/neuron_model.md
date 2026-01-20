@@ -1,171 +1,191 @@
-# ED-ALIF Neuron Model
+# Neuron Model – Event-Driven Adaptive LIF (ED-ALIF)
 
-## 1. Introduction
+## 1. Overview
 
-The **ED-ALIF (Event-Driven Adaptive Leaky Integrate-and-Fire) neuron** is an advanced spiking neuron model designed for digital hardware (FPGA/ASIC).  
+This document describes the mathematical and conceptual neuron model implemented by the `ed_alif_neuron` hardware module. The design is an **event-driven Adaptive Leaky Integrate-and-Fire (ALIF)** neuron optimized for FPGA and ASIC implementations.
 
-It extends the classical LIF neuron by including:
+The model extends the classical LIF neuron by introducing:
 
-- **Spike-triggered adaptation** (adaptive threshold)  
-- **Input-event-driven decay** of adaptation  
-- **Refractory gating** to prevent rapid consecutive spikes  
-- **Saturating arithmetic** to prevent voltage overflow  
+* Spike-triggered adaptation
+* Input-event-driven decay
+* Refractory gating
+* Saturating arithmetic
+* Event-driven state updates
 
-The neuron operates in an **event-driven manner**, updating only when scheduled (`enable` signal is high), reducing switching activity and power consumption.
-
----
-
-## 2. Membrane Potential Dynamics
-
-The membrane potential evolves according to:
-
-$$
-V(t+1) = V(t) + I_\text{syn} - \frac{V(t)}{2^k} - W(t)
-$$
-
-Where:
-
-- $V(t)$ = Membrane voltage  
-- $I_\text{syn}$ = Synaptic input current  
-- $k$ = Leak factor (implemented as `V >> LEAK_SHIFT`)  
-- $W(t)$ = Adaptation variable  
-
-**Drawbacks in classical LIF:**
-
-- No adaptation → neuron fires at a constant rate  
-- Strong input currents may overflow membrane voltage  
-
-**ED-ALIF Improvements:**
-
-- **Spike-triggered adaptation $W(t)$** prevents overfiring  
-- **Wide accumulator + saturation logic** avoids overflow
+These mechanisms improve biological realism and hardware efficiency.
 
 ---
 
-## 3. Adaptive Threshold
+## 2. State Variables
 
-The effective threshold is:
+The neuron maintains two internal state variables:
 
-$$
-\theta_\text{eff}(t) = V_\text{th} + W(t)
-$$
+* **Membrane potential**:
+  [ V[t] ]
+  Stored in hardware as `V_reg` (signed, `V_WIDTH` bits)
 
-Where:
+* **Adaptation variable**:
+  [ W[t] ]
+  Stored in hardware as `W_reg` (unsigned, `W_WIDTH` bits)
 
-- $V_\text{th}$ = Base threshold  
-- $W(t)$ = Adaptation variable  
-
-**Functionality:**
-
-- Threshold increases after spikes to reduce firing probability  
-- Threshold recovers gradually via adaptation decay  
-
----
-## 4. Spike Generation
-
-A spike occurs when:
-
-spike = 1, if V_int >= theta_eff and refract_cnt = 0
-spike = 0, otherwise
-
-Where `refract_cnt` is the refractory counter preventing immediate consecutive spikes.
- 
-
-**Improvement:** Prevents high-frequency spike bursts seen in classical LIF/ALIF neurons.
+The adaptation variable represents spike-frequency adaptation or neuronal fatigue.
 
 ---
 
-## 5. Post-Spike Updates
+## 3. Discrete-Time Dynamics
 
-On spike occurrence:
+The neuron evolves in discrete time steps when `enable = 1`.
 
-$$
-\begin{aligned}
-V(t+1) &= V_\text{reset} \\
-W(t+1) &= \min(W(t) + B, W_\text{max})
-\end{aligned}
-$$
+### 3.1 Membrane Potential Update
 
-Where:
+[
+V[t+1] = V[t] + I_{syn}[t] - leak[t] - W[t]
+]
 
-- `V_reset` = Membrane reset voltage after spike  
-- $B$ = Spike-triggered adaptation increment  
-- $W_\text{max}$ = Maximum allowed adaptation (saturation)  
 
-**Purpose:**  
-
-- Resets membrane voltage to prevent immediate re-spike  
-- Increases adaptation threshold to avoid overfiring  
+This equation integrates synaptic input, subtracts leakage, and applies adaptive negative feedback.
 
 ---
 
-## 6. Input-Driven Adaptation Decay
+### 3.2 Spike Generation Rule
 
-On receiving an external spike (input event) without neuron spiking:
 
-$$
-W(t+1) = \max(W(t) - D, 0)
-$$
+spike[t] = (V[t] \ge V_{th} + W[t]) \land (refract_cnt = 0)
 
-Where $D$ = Adaptation decay constant  
 
-**Purpose:**  
+where:
 
-- Gradual recovery from adaptation  
-- Prevents permanent high threshold  
+* ( V_{th} ): base firing threshold
+* ( W[t] ): adaptive threshold offset
+* `refract_cnt`: external refractory counter
 
----
+The effective firing threshold is:
 
-## 7. State Update Algorithm (Code Mapping)
 
-1. **Leak calculation:** `leak = V_reg >>> LEAK_SHIFT`  
-2. **Membrane update:** `V_int = V_reg + I_syn - leak - W_reg`  
-3. **Saturation:** Clamp `V_int` within `[-2^(V_WIDTH-1), 2^(V_WIDTH-1)-1]`  
-4. **Adaptive threshold:** `thresh_eff = V_th + W_reg`  
-5. **Spike generation:** `spike = enable && (V_int >= thresh_eff) && (refract_cnt == 0)`  
-6. **Next-state logic:**  
-    - If spike: `V_next = V_reset`, `W_next = min(W_reg + B, W_max)`  
-    - Else: `V_next = V_int`  
-        - On `input_event`: `W_next = max(W_reg - D, 0)`  
-7. **Register update:** Synchronous on `clk`  
-    - `V_reg <= V_next`  
-    - `W_reg <= W_next`  
+thresh_{eff}[t] = V_{th} + W[t]
 
-**This mapping corresponds exactly to the RTL code in `rtl/ed_alif_neuron.sv`.**
 
 ---
 
-## 8. Drawbacks of Prior Designs and ED-ALIF Solutions
+### 3.3 Adaptation Update Rule
 
-| Limitation | ED-ALIF Solution |
-|------------|----------------|
-| Voltage overflow with strong input | Wide accumulator + saturating arithmetic |
-| Fixed threshold → excessive spikes | Adaptive threshold using `W_reg` |
-| No adaptation decay | Decay implemented on `input_event` |
-| Continuous firing | Refractory counter gating |
-| High switching activity | Event-driven enable-controlled updates |
+The adaptation variable evolves according to:
+
+[
+W[t+1] =
+\begin{cases}
+\min(W[t] + B,; W_{max}) & \text{if spike} \
+\max(W[t] - D,; 0) & \text{if input_event and no spike} \
+W[t] & \text{otherwise}
+\end{cases}
+]
+
+where:
+
+* ( B ): spike-triggered adaptation increment
+* ( D ): decay step on input event
+* ( W_{max} = 2^{W_{WIDTH}} - 1 ): saturation limit
+
+This rule models spike-frequency adaptation and recovery.
 
 ---
 
-## 9. Newly Added Features
+## 4. Refractory Mechanism
 
-1. **Saturating arithmetic** to prevent overflow  
-2. **Event-driven operation** → update only when scheduled  
-3. **Spike-triggered adaptation** → dynamically increases threshold  
-4. **Input-event adaptation decay** → allows recovery  
-5. **Refractory gating** → prevents burst spikes  
-6. **Parameterizable design** → `V_WIDTH`, `W_WIDTH`, `LEAK_SHIFT`, `B`, `D`, `V_RESET`  
+The neuron is prevented from firing during a refractory period.
+
+[
+spike[t] = (V[t] \ge thresh_{eff}[t]) \land (refract_cnt = 0)
+]
+
+The refractory counter is managed externally, allowing flexible refractory durations per neuron or per network.
 
 ---
 
-## 10. Summary
+## 5. Event-Driven Operation
 
-The ED-ALIF neuron:
+State updates occur only when:
 
-- Implements biologically inspired spike-frequency adaptation  
-- Prevents voltage overflow and rapid firing  
-- Recovers gradually after input events  
-- Fully parameterizable and synthesizable  
-- Ideal for FPGA and neuromorphic systems  
+```
+enable = 1
+```
 
-This model directly **replicates the functionality in `rtl/ed_alif_neuron.sv`** and documents **all improvements and design decisions**.
+If `enable = 0`, both ( V[t] ) and ( W[t] ) retain their previous values.
+
+This reduces unnecessary switching activity and lowers power consumption in large neuromorphic arrays.
+
+---
+
+## 6. Saturating Arithmetic
+
+To ensure numerical stability and hardware safety:
+
+* ( V[t] ) is clamped implicitly by fixed-width signed arithmetic
+* ( W[t] ) is explicitly saturated:
+
+  * Upper bound: ( W_{max} )
+  * Lower bound: 0
+
+This prevents overflow under strong excitation or repeated spiking.
+
+---
+
+## 7. Relationship to Classical LIF
+
+| Feature     | Classical LIF    | ED-ALIF                     |
+| ----------- | ---------------- | --------------------------- |
+| Threshold   | Constant         | Adaptive: ( V_{th} + W[t] ) |
+| Adaptation  | None             | Spike-triggered + decay     |
+| Refractory  | Optional         | Mandatory gating            |
+| Update Mode | Clock-driven     | Event-driven (`enable`)     |
+| Arithmetic  | Wrap-around risk | Saturating                  |
+
+---
+
+## 8. Interpretation of the Adaptation Variable W[t]
+
+The adaptation variable can be interpreted as:
+
+* A slow potassium current
+* A dynamic threshold offset
+* A fatigue or refractoriness memory
+
+Functional role:
+
+* Increases after each spike
+* Raises firing threshold
+* Reduces membrane potential
+* Decays slowly back to zero
+
+This enforces realistic firing patterns such as:
+
+* Spike-frequency adaptation
+* Burst suppression
+* Regularized firing rates
+
+---
+
+## 9. Summary
+
+The ED-ALIF neuron model implements a biologically inspired, hardware-friendly spiking neuron with:
+
+* Adaptive firing behavior
+* Event-driven efficiency
+* Configurable leakage and thresholds
+* External refractory control
+* Robust fixed-point arithmetic
+
+This model is well suited for:
+
+* Neuromorphic computing
+* Spiking neural network accelerators
+* FPGA prototyping
+* Low-power AI hardware
+
+---
+
+## 10. References
+
+* Gerstner, W., Kistler, W. M., Naud, R., & Paninski, L. (2014). *Neuronal Dynamics: From Single Neurons to Networks and Models of Cognition*. Cambridge University Press.
+
+* Pfeil, T., et al. (2013). *Six networks on a universal neuromorphic computing substrate*. Frontiers in Neuroscience.
